@@ -1,0 +1,651 @@
+[
+ {
+  "query": "how is KV cache eviction triggered when the cache grows beyond budget",
+  "expectedPaths": [
+   "src/serving/kv_policies/base.py"
+  ],
+  "expectedLines": [
+   153,
+   203
+  ],
+  "lang": "py",
+  "evidence": "BaseEvictionCache.update() calls _decide_evict() then _physically_drop() when over budget"
+ },
+ {
+  "query": "what strategy decides which cached KV positions to drop based on accumulated attention",
+  "expectedPaths": [
+   "src/serving/kv_policies/h2o.py"
+  ],
+  "expectedLines": [
+   284,
+   390
+  ],
+  "lang": "py",
+  "evidence": "H2OCache._decide_evict() topk middle positions by cumulative attention"
+ },
+ {
+  "query": "how does the attention sink prefix get preserved even when memory pressure evicts other tokens",
+  "expectedPaths": [
+   "src/serving/kv_policies/streaming.py"
+  ],
+  "expectedLines": [
+   87,
+   104
+  ],
+  "lang": "py",
+  "evidence": "StreamingLLMCache._decide_evict() keeps first sink_size via range(0,sink)"
+ },
+ {
+  "query": "what is the mechanism to subscribe a cache policy to receive post-softmax attention scores",
+  "expectedPaths": [
+   "src/serving/kv_policies/h2o.py"
+  ],
+  "expectedLines": [
+   110,
+   111
+  ],
+  "lang": "py",
+  "evidence": "H2OCache.__init__ calls attention_bus.subscribe(self)"
+ },
+ {
+  "query": "when is random token eviction used and what is the baseline control for comparing policies",
+  "expectedPaths": [
+   "src/serving/kv_policies/random_evict.py"
+  ],
+  "expectedLines": [
+   67,
+   86
+  ],
+  "lang": "py",
+  "evidence": "RandomEvictCache._decide_evict() uniformly samples n_evict positions"
+ },
+ {
+  "query": "how are per-layer eviction decisions recorded and persisted to npz files for analysis",
+  "expectedPaths": [
+   "src/serving/kv_policies/recorder.py"
+  ],
+  "expectedLines": [
+   52,
+   139
+  ],
+  "lang": "py",
+  "evidence": "KVEvictionRecorder.append()/write() serialize CSR kept/evicted to npz"
+ },
+ {
+  "query": "what is the default fallback behavior when scores are unavailable during prefill",
+  "expectedPaths": [
+   "src/serving/kv_policies/h2o.py"
+  ],
+  "expectedLines": [
+   300,
+   321
+  ],
+  "lang": "py",
+  "evidence": "H2OCache._decide_evict score_missing fallback: evenly-spaced middle positions"
+ },
+ {
+  "query": "how is the exponential moving average score aggregation implemented for heavy-hitter scoring",
+  "expectedPaths": [
+   "src/serving/kv_policies/h2o.py"
+  ],
+  "expectedLines": [
+   179,
+   191
+  ],
+  "lang": "py",
+  "evidence": "H2OCache.observe() EMA buffer.mul_(decay).add_(per_key)"
+ },
+ {
+  "query": "how does the agent loop process incoming messages and dispatch to handlers",
+  "expectedPaths": [
+   "src/agents/openclaw/_loop.py"
+  ],
+  "expectedLines": [
+   159,
+   300
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "AgentLoop dispatch distributed across update()/runner"
+ },
+ {
+  "query": "what hooks run before tool execution to set context for file and shell operations",
+  "expectedPaths": [
+   "src/agents/openclaw/_loop.py"
+  ],
+  "expectedLines": [
+   90,
+   106
+  ],
+  "lang": "py",
+  "evidence": "_LoopHook.before_execute_tools() sets channel/chat context"
+ },
+ {
+  "query": "how are builtin skills loaded and merged with runtime-specific skill definitions",
+  "expectedPaths": [
+   "src/agents/openclaw/_skills.py"
+  ],
+  "expectedLines": [
+   27,
+   63
+  ],
+  "lang": "py",
+  "evidence": "SkillsLoader.list_skills() merges workspace then builtin, dedup by name"
+ },
+ {
+  "query": "what mechanism handles agent thinking and internal reasoning tokens in streaming output",
+  "expectedPaths": [
+   "src/agents/openclaw/_loop.py"
+  ],
+  "expectedLines": [
+   75,
+   84
+  ],
+  "lang": "py",
+  "evidence": "_LoopHook.on_stream() strip_think() on incremental content"
+ },
+ {
+  "query": "how are GPU memory samples collected during container execution",
+  "expectedPaths": [
+   "src/harness/gpu_resource_sampler.py"
+  ],
+  "expectedLines": [
+   55,
+   104
+  ],
+  "lang": "py",
+  "evidence": "GpuResourceSampler.start()/_run_loop() polls at sample_hz"
+ },
+ {
+  "query": "what metrics are collected per GPU process to track memory consumption",
+  "expectedPaths": [
+   "src/harness/metrics.py"
+  ],
+  "expectedLines": [
+   8,
+   79
+  ],
+  "lang": "py",
+  "evidence": "sample_nvidia_smi_compute_apps() per-pid gpu_serial/memory_used_mib"
+ },
+ {
+  "query": "how is the vLLM engine invoked with attention hooks for sparse attention recording",
+  "expectedPaths": [
+   "src/harness/vllm_entrypoint_with_hooks.py"
+  ],
+  "expectedLines": [
+   1,
+   45
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "45-line entrypoint wraps model.generate with LayerCapturer"
+ },
+ {
+  "query": "what configuration controls the prefill attention sampling strategy for H2O scoring",
+  "expectedPaths": [
+   "src/serving/kv_policies/base.py"
+  ],
+  "expectedLines": [
+   55,
+   55
+  ],
+  "lang": "py",
+  "evidence": "EvictionPolicyConfig.prefill_mode Literal['sampled','full']"
+ },
+ {
+  "query": "how are container images prepared and cached to avoid repeated pulls",
+  "expectedPaths": [
+   "src/harness/container_image_prep.py"
+  ],
+  "expectedLines": [
+   1,
+   292
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "ensure_source_image/ensure_fixed_image; bounds unverified"
+ },
+ {
+  "query": "what orchestrates the lifecycle of running one trace collection task in a container",
+  "expectedPaths": [
+   "src/trace_collect/attempt_pipeline.py"
+  ],
+  "expectedLines": [
+   89,
+   200
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "AttemptContext/run_attempt; bounds unverified"
+ },
+ {
+  "query": "how does the trace collection system determine which attempt number to use for retries",
+  "expectedPaths": [
+   "src/trace_collect/attempt_pipeline.py"
+  ],
+  "expectedLines": [
+   60,
+   72
+  ],
+  "lang": "py",
+  "evidence": "next_attempt_number_in() scans attempt_N dirs returns max+1"
+ },
+ {
+  "query": "what latency metrics are computed from raw LLM trace actions",
+  "expectedPaths": [
+   "src/trace_collect/latency_metrics.py"
+  ],
+  "expectedLines": [
+   49,
+   102
+  ],
+  "lang": "py",
+  "evidence": "summarize_llm_latencies() total_llm_ms/ttft/tpot"
+ },
+ {
+  "query": "how are LLM calls retried with exponential backoff on transient HTTP errors",
+  "expectedPaths": [
+   "src/llm_call/provider_base.py"
+  ],
+  "expectedLines": [
+   1,
+   150
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "LLMProvider retry loop; bounds unverified"
+ },
+ {
+  "query": "how does the simulator replay LLM timings from collected traces",
+  "expectedPaths": [
+   "src/trace_collect/simulator.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "LoadedTraceSession replay; bounds unverified"
+ },
+ {
+  "query": "what is the JSONL trace format version and how are actions identified",
+  "expectedPaths": [
+   "src/harness/trace_logger.py"
+  ],
+  "expectedLines": [
+   35,
+   66
+  ],
+  "lang": "py",
+  "evidence": "TraceLogger.log_metadata writes trace_format_version 5; log_trace_action v5 records"
+ },
+ {
+  "query": "how are benchmark datasets configured via plugin architecture to avoid hardcoding names",
+  "expectedPaths": [
+   "src/agents/benchmarks/base.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "Benchmark ABC/BenchmarkConfig; bounds unverified"
+ },
+ {
+  "query": "what is the sparse attention mask interface and how do methods implement selection",
+  "expectedPaths": [
+   "src/serving/sparse_attention/base.py"
+  ],
+  "expectedLines": [
+   100,
+   121
+  ],
+  "lang": "py",
+  "evidence": "BaseSparseAttention Protocol build_additive_mask() 4D tensor"
+ },
+ {
+  "query": "how does sliding window attention enforce sink prefix plus recent token pattern",
+  "expectedPaths": [
+   "src/serving/sparse_attention/sliding.py"
+  ],
+  "expectedLines": [
+   50,
+   104
+  ],
+  "lang": "py",
+  "evidence": "SlidingWindowSparseAttention.build_additive_mask() allows [0:sink) and [len-recent:len)"
+ },
+ {
+  "query": "what observe-only mode allows testing sparse selection without changing generation",
+  "expectedPaths": [
+   "src/serving/sparse_attention/sliding.py"
+  ],
+  "expectedLines": [
+   70,
+   71
+  ],
+  "lang": "py",
+  "evidence": "build_additive_mask() returns None when observe_only, skipping enforcement"
+ },
+ {
+  "query": "how are prompt templates resolved from config names to markdown files",
+  "expectedPaths": [
+   "src/agents/openclaw/config/schema.py"
+  ],
+  "expectedLines": [
+   1,
+   54
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "PromptTemplateConfig resolves configs/prompts dir; bounds unverified"
+ },
+ {
+  "query": "how does the Solid.js frontend load and render multi-agent trace timelines",
+  "expectedPaths": [
+   "demo/gantt_viewer/frontend/src/App.tsx"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "tsx",
+  "uncertain": true,
+  "evidence": "App root; bounds unverified"
+ },
+ {
+  "query": "how does the gantt viewer canvas renderer handle zoom and pan for large traces",
+  "expectedPaths": [
+   "demo/gantt_viewer/frontend/src/canvas/CanvasRenderer.ts"
+  ],
+  "expectedLines": [
+   1,
+   150
+  ],
+  "lang": "ts",
+  "uncertain": true,
+  "evidence": "CanvasRenderer viewport transforms; bounds unverified"
+ },
+ {
+  "query": "what state management pattern is used to track visible traces and UI interactions",
+  "expectedPaths": [
+   "demo/gantt_viewer/frontend/src/state/signals.ts"
+  ],
+  "expectedLines": [
+   1,
+   95
+  ],
+  "lang": "ts",
+  "uncertain": true,
+  "evidence": "Solid.js signals; bounds unverified"
+ },
+ {
+  "query": "how are trace files auto-discovered from config YAML and glob patterns",
+  "expectedPaths": [
+   "demo/gantt_viewer/backend/discovery.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "DiscoveryState.from_config_path; bounds unverified"
+ },
+ {
+  "query": "what REST API endpoints expose trace metadata and build gantt payloads",
+  "expectedPaths": [
+   "demo/gantt_viewer/backend/routes.py"
+  ],
+  "expectedLines": [
+   1,
+   150
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "/api/traces /api/payload; bounds unverified"
+ },
+ {
+  "query": "how is the gantt payload transformed from raw trace events to visual spans and markers",
+  "expectedPaths": [
+   "demo/gantt_viewer/backend/payload.py"
+  ],
+  "expectedLines": [
+   136,
+   200
+  ],
+  "lang": "py",
+  "evidence": "build_gantt_payload_multi() extracts/transforms spans and markers"
+ },
+ {
+  "query": "how are resource metrics loaded and aligned to trace timeline for visualization",
+  "expectedPaths": [
+   "demo/gantt_viewer/backend/payload.py"
+  ],
+  "expectedLines": [
+   187,
+   200
+  ],
+  "lang": "py",
+  "evidence": "_load_resource_timeline() reads resources.json aligns to t0"
+ },
+ {
+  "query": "how does the collector resolve LLM provider configuration from CLI and env vars",
+  "expectedPaths": [
+   "src/llm_call/config.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "resolve_llm_config CLI>env>error; bounds unverified"
+ },
+ {
+  "query": "what CLI flags control KV cache policy selection and budget parameters",
+  "expectedPaths": [
+   "src/trace_collect/cli.py"
+  ],
+  "expectedLines": [
+   1,
+   200
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "--kv-policy/--kv-budget/--kv-config; bounds unverified"
+ },
+ {
+  "query": "how does position control eviction select which cache positions to keep",
+  "expectedPaths": [
+   "src/serving/kv_policies/metadata.py"
+  ],
+  "expectedLines": [
+   1076,
+   1098
+  ],
+  "lang": "py",
+  "evidence": "PositionControlCache._decide_evict() branches random/middle/structured to select keep set"
+ },
+ {
+  "query": "how does metadata-aware eviction protect system prompt tokens from being evicted",
+  "expectedPaths": [
+   "src/serving/kv_policies/metadata.py"
+  ],
+  "expectedLines": [
+   683,
+   900
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "MetadataResidencyCache reserve system prompt; bounds unverified"
+ },
+ {
+  "query": "how is the prefill deferred eviction in H2O implemented to ensure score availability",
+  "expectedPaths": [
+   "src/serving/kv_policies/h2o.py"
+  ],
+  "expectedLines": [
+   222,
+   280
+  ],
+  "lang": "py",
+  "evidence": "H2OCache._defer_decision()/_flush_pending_prefill_eviction()"
+ },
+ {
+  "query": "what compaction logic maintains consistency between K/V tensors and score buffers after eviction",
+  "expectedPaths": [
+   "src/serving/kv_policies/h2o.py"
+  ],
+  "expectedLines": [
+   394,
+   426
+  ],
+  "lang": "py",
+  "evidence": "H2OCache._post_evict_hook() index_select score/count buffers"
+ },
+ {
+  "query": "how are tool calls extracted and formatted into structured action records in traces",
+  "expectedPaths": [
+   "src/harness/trace_logger.py"
+  ],
+  "expectedLines": [
+   56,
+   66
+  ],
+  "lang": "py",
+  "evidence": "TraceLogger.log_trace_action() converts TraceAction to JSONL dict"
+ },
+ {
+  "query": "how does the framework handle session resume across multiple LLM calls",
+  "expectedPaths": [
+   "src/agents/openclaw/session/manager.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "SessionManager resume; bounds unverified"
+ },
+ {
+  "query": "what determines whether a KV policy supports session resumption without divergence",
+  "expectedPaths": [
+   "src/serving/kv_policies/base.py"
+  ],
+  "expectedLines": [
+   126,
+   134
+  ],
+  "lang": "py",
+  "evidence": "BaseEvictionCache.supports_session_resume() False when keep set varies per layer"
+ },
+ {
+  "query": "how does the agent context builder construct the system prompt with available tools",
+  "expectedPaths": [
+   "src/agents/openclaw/_context.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "ContextBuilder; bounds unverified"
+ },
+ {
+  "query": "how are MCP server configurations loaded and tool schemas registered",
+  "expectedPaths": [
+   "src/agents/openclaw/tools/mcp.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "MCPTool; bounds unverified"
+ },
+ {
+  "query": "what shell sandboxing restrictions are applied to bash execution",
+  "expectedPaths": [
+   "src/agents/openclaw/tools/shell.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "ExecTool restrictions; bounds unverified"
+ },
+ {
+  "query": "how does the network security layer restrict outbound connections",
+  "expectedPaths": [
+   "src/agents/openclaw/security/network.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "Network whitelist/blacklist; bounds unverified"
+ },
+ {
+  "query": "how are multi-iteration benchmarks orchestrated with checkpointing between attempts",
+  "expectedPaths": [
+   "tests/test_terminal_bench_runner.py"
+  ],
+  "expectedLines": [
+   1,
+   100
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "terminal bench runner test; bounds unverified"
+ },
+ {
+  "query": "how are sparse attention block selection scores reduced across heads for ranking",
+  "expectedPaths": [
+   "src/serving/sparse_attention/block_topk.py"
+  ],
+  "expectedLines": [
+   85,
+   150
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "BlockTopKSparseAttention score_reduction max/mean/vote; bounds unverified"
+ },
+ {
+  "query": "how is gap compression applied to remove idle time from trace visualization",
+  "expectedPaths": [
+   "demo/gantt_viewer/backend/payload.py"
+  ],
+  "expectedLines": [
+   200,
+   250
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "apply_real_timeline gap compression; bounds unverified"
+ },
+ {
+  "query": "what validation ensures KV eviction and sparse attention methods are mutually exclusive",
+  "expectedPaths": [
+   "src/trace_collect/cli.py"
+  ],
+  "expectedLines": [
+   1,
+   150
+  ],
+  "lang": "py",
+  "uncertain": true,
+  "evidence": "validate_attention_method_exclusivity; bounds unverified"
+ }
+]

@@ -1,0 +1,13 @@
+# Dependencies (372M — restored via npm install / package-lock.json)
+node_modules/
+
+# Build / TS incremental
+dist/
+*.tsbuildinfo
+
+# Logs & OS cruft
+*.log
+.DS_Store
+
+# Stray local scratch scripts (we create _*.mjs for one-off diagnostics)
+/_*.mjs

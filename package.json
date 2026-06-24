@@ -1,0 +1,33 @@
+{
+  "name": "pi-code-index",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local semantic codebase index extension for pi",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "clean": "rm -rf node_modules package-lock.json",
+    "eval": "node scripts/eval.mjs"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.30.0",
+    "chokidar": "^5.0.0",
+    "fast-glob": "^3.3.3",
+    "ignore": "^7.0.5",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.20.8"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
