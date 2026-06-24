@@ -35,8 +35,9 @@ async function isDirectory(absPath: string): Promise<boolean> {
 	}
 }
 
-/** Walk directory tree rooted at `root`, collect all `.index_tag` files, return a map of dir→Set<tag>. */
-async function collectTagFiles(root: string): Promise<Map<string, Set<string>>> {
+/** Walk directory tree rooted at `root`, collect all `.index_tag` files, return a map of dir→Set<tag>.
+ *  Directory basenames in `excludeDirs` (e.g. node_modules, .git) are skipped entirely. */
+async function collectTagFiles(root: string, excludeDirs: Set<string>): Promise<Map<string, Set<string>>> {
 	const result = new Map<string, Set<string>>();
 
 	async function walk(dir: string): Promise<void> {
@@ -52,6 +53,7 @@ async function collectTagFiles(root: string): Promise<Map<string, Set<string>>> 
 		}
 		await Promise.all(
 			names.map(async (name) => {
+				if (excludeDirs.has(name)) return;
 				const child = join(dir, name);
 				if (await isDirectory(child)) await walk(child);
 			}),
@@ -73,8 +75,8 @@ export interface TagResolver {
  *
  * Designed to be constructed once per query — `.index_tag` files are few and the walk is lightweight.
  */
-export async function buildTagResolver(projectRoot: string): Promise<TagResolver> {
-	const dirTagMap = await collectTagFiles(projectRoot);
+export async function buildTagResolver(projectRoot: string, excludeDirs: Set<string>): Promise<TagResolver> {
+	const dirTagMap = await collectTagFiles(projectRoot, excludeDirs);
 
 	function resolveTags(relPath: string): Set<string> {
 		// Build absolute path from relPath (relPath uses forward slashes, cross-platform safe via join)
@@ -103,8 +105,8 @@ export async function buildTagResolver(projectRoot: string): Promise<TagResolver
  * Walk the project tree, collect all `.index_tag` declarations, and return a sorted map of
  * tag → sorted array of project-relative declaring directories. Used by `/index tags`.
  */
-export async function listDeclaredTags(projectRoot: string): Promise<Map<string, string[]>> {
-	const dirTagMap = await collectTagFiles(projectRoot);
+export async function listDeclaredTags(projectRoot: string, excludeDirs: Set<string>): Promise<Map<string, string[]>> {
+	const dirTagMap = await collectTagFiles(projectRoot, excludeDirs);
 	const tagToDirs = new Map<string, Set<string>>();
 	for (const [absDir, tags] of dirTagMap) {
 		const relDir = absDir === projectRoot ? "." : absDir.slice(projectRoot.length + 1);

@@ -214,7 +214,8 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 				}
 				if (sub === "tags") {
 						// Read-only: walk .index_tag files and list all declared tags with their declaring dirs.
-						const tagMap = await listDeclaredTags(project.root);
+						const { resolved: tagsResolved } = await resolveConfig(project);
+						const tagMap = await listDeclaredTags(project.root, new Set(tagsResolved.excludeDirs));
 						if (tagMap.size === 0) {
 							ctx.ui.notify("No .index_tag files found in this project.", "info");
 							return;

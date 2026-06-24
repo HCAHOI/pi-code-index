@@ -72,7 +72,7 @@ export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 			const raw = await searchIndex(project, embedded.vectors[0], candidateN);
 
 			// Build tag resolver once per query (walks .index_tag files; lightweight, zero reindex).
-			const tagResolver = tagFilterActive ? await buildTagResolver(project.root) : null;
+			const tagResolver = tagFilterActive ? await buildTagResolver(project.root, new Set(resolved.excludeDirs)) : null;
 
 			// scoreThreshold (0 = off) trims low-relevance noise before the final-k cut; score is a
 			// similarity in (0,1] so higher passes. Lifts precision / agent signal, not recall.
