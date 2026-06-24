@@ -100,6 +100,27 @@ export async function buildTagResolver(projectRoot: string): Promise<TagResolver
 }
 
 /**
+ * Walk the project tree, collect all `.index_tag` declarations, and return a sorted map of
+ * tag → sorted array of project-relative declaring directories. Used by `/index tags`.
+ */
+export async function listDeclaredTags(projectRoot: string): Promise<Map<string, string[]>> {
+	const dirTagMap = await collectTagFiles(projectRoot);
+	const tagToDirs = new Map<string, Set<string>>();
+	for (const [absDir, tags] of dirTagMap) {
+		const relDir = absDir === projectRoot ? "." : absDir.slice(projectRoot.length + 1);
+		for (const tag of tags) {
+			if (!tagToDirs.has(tag)) tagToDirs.set(tag, new Set());
+			tagToDirs.get(tag)!.add(relDir);
+		}
+	}
+	const result = new Map<string, string[]>();
+	for (const [tag, dirs] of [...tagToDirs.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+		result.set(tag, [...dirs].sort());
+	}
+	return result;
+}
+
+/**
  * D3 filter semantics:
  * - `exclude_tags`: if the file's tags contain ANY exclude tag → filtered out. Untagged files are unaffected.
  * - `include_tags`: strict whitelist — only files with ANY include tag pass. Untagged files are excluded.

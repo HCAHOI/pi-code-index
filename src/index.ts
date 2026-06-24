@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { clearIndex, loadManifest, manifestCompatible } from "./store.ts";
+import { listDeclaredTags } from "./tagging.ts";
 import { getProjectInfo } from "./project.ts";
 import { loadGlobalConfig, loadProjectState, resolveConfig, saveProjectState } from "./config.ts";
 import { estimateIndex, incrementalRefresh, reindexProject, removeNonIndexableFiles, type ProgressUpdate } from "./indexer.ts";
@@ -211,6 +212,20 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 					ctx.ui.notify(`removed ${removed} chunks (free) · embedded ${toEmbedPaths.length} files`, "info");
 					return;
 				}
+				if (sub === "tags") {
+						// Read-only: walk .index_tag files and list all declared tags with their declaring dirs.
+						const tagMap = await listDeclaredTags(project.root);
+						if (tagMap.size === 0) {
+							ctx.ui.notify("No .index_tag files found in this project.", "info");
+							return;
+						}
+						const lines = ["Declared tags (from .index_tag files):"];
+						for (const [tag, dirs] of tagMap) {
+							lines.push(`  ${tag}  →  ${dirs.join(", ")}`);
+						}
+						ctx.ui.notify(lines.join("\n"), "info");
+						return;
+					}
 				if (sub === "help") {
 					const helpText = [
 						"/index subcommands:",
@@ -221,6 +236,7 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 						"  reindex  — full rebuild from scratch (always confirms cost)",
 						"  clear    — wipe the index without disabling",
 						"  config   — open settings wizard",
+						"  tags     — list all tags declared in .index_tag files (read-only, no reindex needed)",
 						"  help     — show this message",
 						"",
 						"Ignore layers (most authoritative first):",
