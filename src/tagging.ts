@@ -97,13 +97,19 @@ export interface TagResolver {
  *
  * Designed to be constructed once per query — `.index_tag` files are few and the walk is lightweight.
  */
+// Cache the walked .index_tag map briefly: the inline tag hint builds a resolver on EVERY search
+// (even tag-free ones), so back-to-back searches would otherwise re-walk the source tree each time.
+// Short TTL keeps .index_tag edits effectively immediate (visible within a few seconds).
+const RESOLVER_TTL_MS = 3000;
+const resolverCache = new Map<string, { resolver: TagResolver; builtAt: number }>();
+
 export async function buildTagResolver(projectRoot: string, excludeDirs: Set<string>): Promise<TagResolver> {
+	const cached = resolverCache.get(projectRoot);
+	if (cached && Date.now() - cached.builtAt < RESOLVER_TTL_MS) return cached.resolver;
 	const dirTagMap = await collectTagFiles(projectRoot, excludeDirs);
 
 	function resolveTags(relPath: string): Set<string> {
-		// Build absolute path from relPath (relPath uses forward slashes, cross-platform safe via join)
 		const absPath = join(projectRoot, relPath);
-		// Walk ancestor chain: start from the file's directory up to (and including) projectRoot
 		const fileDir = dirname(absPath);
 		const union = new Set<string>();
 		let cur = fileDir;
@@ -120,7 +126,9 @@ export async function buildTagResolver(projectRoot: string, excludeDirs: Set<str
 		return union;
 	}
 
-	return { resolveTags, hasTags: dirTagMap.size > 0 };
+	const resolver: TagResolver = { resolveTags, hasTags: dirTagMap.size > 0 };
+	resolverCache.set(projectRoot, { resolver, builtAt: Date.now() });
+	return resolver;
 }
 
 export interface TagStats {
@@ -181,6 +189,41 @@ export async function listDeclaredTags(projectRoot: string, excludeDirs: Set<str
 		result.set(tag, { dirs: [...dirs].sort(), description: tagToDesc.get(tag) });
 	}
 	return result;
+}
+
+/** Agent-facing help shown when no .index_tag files exist. */
+export const EMPTY_TAGS_HELP = [
+	"No .index_tag files in this project yet.",
+	"To organize areas for filtered search, create a .index_tag in any directory:",
+	"  # one-line description of what these tags mean",
+	"  test, e2e",
+	"Subdirectories inherit. Filter with include_tags / exclude_tags. No reindex needed.",
+].join("\n");
+
+/**
+ * Format declared tags + stats into the agent-facing list (shared by `list_code_tags` and `/index tags`).
+ * Alignment uses only the ASCII tag and count columns; the (possibly CJK) description is placed last so
+ * its display width can't break the layout.
+ */
+export function formatDeclaredTags(tagMap: Map<string, DeclaredTagInfo>, stats: TagStats): string {
+	const total = stats.total || 1;
+	const maxTagLen = [...tagMap.keys()].reduce((m, t) => Math.max(m, t.length), 0);
+	const lines = ["Tags declared in this project (.index_tag files):", ""];
+	for (const [tag, { dirs, description }] of tagMap) {
+		const count = stats.perTag.get(tag) ?? 0;
+		const pct = Math.round((count / total) * 100);
+		const head = `  ${tag.padEnd(maxTagLen)}  ${`${count} files · ${pct}%`.padEnd(16)}`;
+		lines.push(description ? `${head}  ${description}` : head.trimEnd());
+		lines.push(`  ${" ".repeat(maxTagLen)}  declared in: ${dirs.join(", ")}`);
+	}
+	if (stats.untagged > 0) {
+		const pct = Math.round((stats.untagged / total) * 100);
+		lines.push(`  (untagged: ${stats.untagged} files · ${pct}% — excluded by include_tags)`);
+	}
+	lines.push("", "Filter semantic_code_search:");
+	lines.push(`  exclude_tags: ["test"]            skip tagged areas (untagged unaffected)`);
+	lines.push(`  include_tags: ["core","harness"]  whitelist: keep files matching ANY (untagged excluded)`);
+	return lines.join("\n");
 }
 
 /**

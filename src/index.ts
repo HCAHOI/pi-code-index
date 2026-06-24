@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { clearIndex, loadManifest, manifestCompatible } from "./store.ts";
-import { buildTagResolver, computeTagStats, listDeclaredTags } from "./tagging.ts";
+import { buildTagResolver, computeTagStats, EMPTY_TAGS_HELP, formatDeclaredTags, listDeclaredTags } from "./tagging.ts";
 import { getProjectInfo } from "./project.ts";
 import { loadGlobalConfig, loadProjectState, resolveConfig, saveProjectState } from "./config.ts";
 import { estimateIndex, incrementalRefresh, reindexProject, removeNonIndexableFiles, type ProgressUpdate } from "./indexer.ts";
@@ -213,50 +213,19 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 					return;
 				}
 				if (sub === "tags") {
-						// Read-only: walk .index_tag files and list all declared tags with counts.
-						const { resolved: tagsResolved } = await resolveConfig(project);
-						const tagMap = await listDeclaredTags(project.root, new Set(tagsResolved.excludeDirs));
-						if (tagMap.size === 0) {
-							ctx.ui.notify(
-								[
-									"No .index_tag files in this project yet.",
-									"To organize areas for filtered search, create a .index_tag in any directory:",
-									"  # one-line description of what these tags mean",
-									"  test, e2e",
-									"Subdirectories inherit. Filter with include_tags / exclude_tags. No reindex needed.",
-								].join("\n"),
-								"info",
-							);
-							return;
-						}
-						const manifest = await loadManifest(project);
-						const filePaths = manifest ? Object.keys(manifest.files) : [];
-						const tagResolver = await buildTagResolver(project.root, new Set(tagsResolved.excludeDirs));
-						const stats = computeTagStats(filePaths, (p) => tagResolver.resolveTags(p));
-						const total = stats.total || 1;
-						const lines = ["Tags declared in this project (.index_tag files):", ""];
-						// Find longest tag name for alignment.
-						const tagNames = [...tagMap.keys()];
-						const maxTagLen = tagNames.reduce((m, t) => Math.max(m, t.length), 0);
-						for (const [tag, { dirs, description }] of tagMap) {
-							const count = stats.perTag.get(tag) ?? 0;
-							const pct = Math.round((count / total) * 100);
-							const descStr = description ? `— ${description}` : "";
-							const countStr = `(${count} files · ${pct}%)`;
-							lines.push(`  ${tag.padEnd(maxTagLen)}  ${descStr.padEnd(40)}  ${countStr}`);
-							lines.push(`  ${"".padEnd(maxTagLen)}  declared in: ${dirs.join(", ")}`);
-						}
-						if (stats.untagged > 0) {
-							const pct = Math.round((stats.untagged / total) * 100);
-							lines.push(`  (untagged: ${stats.untagged} files · ${pct}% — excluded by include_tags)`);
-						}
-						lines.push("");
-						lines.push("Filter semantic_code_search:");
-						lines.push(`  exclude_tags: ["test"]            skip tagged areas (untagged unaffected)`);
-						lines.push(`  include_tags: ["core","harness"]  whitelist: keep files matching ANY (untagged excluded)`);
-						ctx.ui.notify(lines.join("\n"), "info");
+					const { resolved: tagsResolved } = await resolveConfig(project);
+					const tagMap = await listDeclaredTags(project.root, new Set(tagsResolved.excludeDirs));
+					if (tagMap.size === 0) {
+						ctx.ui.notify(EMPTY_TAGS_HELP, "info");
 						return;
 					}
+					const manifest = await loadManifest(project);
+					const filePaths = manifest ? Object.keys(manifest.files) : [];
+					const tagResolver = await buildTagResolver(project.root, new Set(tagsResolved.excludeDirs));
+					const stats = computeTagStats(filePaths, (p) => tagResolver.resolveTags(p));
+					ctx.ui.notify(formatDeclaredTags(tagMap, stats), "info");
+					return;
+				}
 				if (sub === "help") {
 					const helpText = [
 						"/index subcommands:",

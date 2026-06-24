@@ -4,7 +4,7 @@ import { embedTexts } from "./embeddings.ts";
 import { resolveConfig } from "./config.ts";
 import { getProjectInfo } from "./project.ts";
 import { loadManifest, manifestCompatible, searchIndex } from "./store.ts";
-import { buildTagResolver, computeTagStats, listDeclaredTags, matchesTagFilter, normalizeTag } from "./tagging.ts";
+import { buildTagResolver, computeTagStats, EMPTY_TAGS_HELP, formatDeclaredTags, listDeclaredTags, matchesTagFilter, normalizeTag } from "./tagging.ts";
 
 function snippet(content: string): string {
 	const lines = content.trim().split(/\r?\n/).slice(0, 8);
@@ -39,46 +39,12 @@ function registerListCodeTagsTool(pi: ExtensionAPI): void {
 			if (!project.safe) return textResult(`Code index unavailable: ${project.reason}`);
 			const { resolved } = await resolveConfig(project);
 			const tagMap = await listDeclaredTags(project.root, new Set(resolved.excludeDirs));
-			if (tagMap.size === 0) {
-				return textResult(
-					[
-						"No .index_tag files in this project yet.",
-						"To organize areas for filtered search, create a .index_tag in any directory:",
-						"  # one-line description of what these tags mean",
-						"  test, e2e",
-						"Subdirectories inherit. Filter with include_tags / exclude_tags. No reindex needed.",
-					].join("\n"),
-				);
-			}
+			if (tagMap.size === 0) return textResult(EMPTY_TAGS_HELP);
 			const manifest = await loadManifest(project);
 			const filePaths = manifest ? Object.keys(manifest.files) : [];
 			const tagResolver = await buildTagResolver(project.root, new Set(resolved.excludeDirs));
 			const stats = computeTagStats(filePaths, (p) => tagResolver.resolveTags(p));
-			const total = stats.total || 1;
-
-			// Find the longest tag name for alignment.
-			const tagNames = [...tagMap.keys()];
-			const maxTagLen = tagNames.reduce((m, t) => Math.max(m, t.length), 0);
-
-			const lines = ["Tags declared in this project (.index_tag files):", ""];
-			for (const [tag, { dirs, description }] of tagMap) {
-				const count = stats.perTag.get(tag) ?? 0;
-				const pct = Math.round((count / total) * 100);
-				const descStr = description ? `— ${description}` : "";
-				const countStr = `(${count} files · ${pct}%)`;
-				// Two-line entry: tag + description + count, then indented declaring dirs.
-				lines.push(`  ${tag.padEnd(maxTagLen)}  ${descStr.padEnd(44)}  ${countStr}`);
-				lines.push(`  ${"".padEnd(maxTagLen)}  declared in: ${dirs.join(", ")}`);
-			}
-			if (stats.untagged > 0) {
-				const pct = Math.round((stats.untagged / total) * 100);
-				lines.push(`  (untagged: ${stats.untagged} files · ${pct}% — excluded by include_tags)`);
-			}
-			lines.push("");
-			lines.push("Filter semantic_code_search:");
-			lines.push(`  exclude_tags: ["test"]            skip tagged areas (untagged unaffected)`);
-			lines.push(`  include_tags: ["core","harness"]  whitelist: keep files matching ANY (untagged excluded)`);
-			return textResult(lines.join("\n"));
+			return textResult(formatDeclaredTags(tagMap, stats));
 		},
 	});
 }
