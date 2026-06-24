@@ -1,9 +1,28 @@
 {
   "name": "pi-code-index",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Local semantic codebase index extension for pi",
+  "description": "Local semantic codebase index for pi: chunks + embeds your repo and exposes a semantic_code_search tool to find code by intent. LanceDB + tree-sitter, incremental on-change reindex, .index_tag filtering.",
+  "license": "MIT",
+  "author": "Chiyu Hao (https://github.com/HCAHOI)",
+  "homepage": "https://github.com/HCAHOI/pi-code-index",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HCAHOI/pi-code-index.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HCAHOI/pi-code-index/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "semantic-search",
+    "code-index",
+    "embeddings",
+    "lancedb",
+    "tree-sitter"
+  ],
   "scripts": {
     "check": "tsc --noEmit",
     "clean": "rm -rf node_modules package-lock.json",

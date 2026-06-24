@@ -4,6 +4,18 @@ Semantic code search extension for pi. Chunks source files, embeds them via a co
 embedding provider, and exposes a `semantic_code_search` tool that lets the agent find code by
 intent rather than by exact keywords.
 
+## Install
+
+```bash
+pi install git:github.com/HCAHOI/pi-code-index
+# or try it for one run without installing:
+pi -e git:github.com/HCAHOI/pi-code-index
+```
+
+On install pi runs `npm install`, which pulls native dependencies (LanceDB,
+tree-sitter wasms). First run downloads the embedding model / calls the
+configured embedding provider — see Quick start. Requires Node ≥ 18.
+
 ## Quick start
 
 ```
