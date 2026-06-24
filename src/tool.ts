@@ -33,6 +33,7 @@ export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 			"Use ffgrep for exact text or identifier search, fffind for file/path discovery, and lsp_navigation for definitions/references instead of semantic_code_search.",
 			"The index only covers files that pass all ignore layers: git (root + nested .gitignore, core.excludesFile, .git/info/exclude), then .indexignore, then .contextignore. Add paths to .indexignore to narrow indexing scope without touching git rules.",
 			"Use exclude_tags to filter out tagged areas (e.g. exclude_tags:[\"test\",\"docs\"]) — files without any tag are unaffected. Use include_tags as a strict whitelist (only tagged files pass; untagged files are excluded). Tags come exclusively from .index_tag files in the directory tree; no auto-tagging is applied.",
+			"To organize tags — on your own initiative or when the user asks — create or edit a `.index_tag` file in the relevant directory: comma/space-separated tag names, `#` for comments; subdirectories inherit their ancestors' tags (union). Edits take effect on the next search with no reindex (tags are computed at query time). Likewise, add gitignore-style patterns to .indexignore to exclude paths from indexing.",
 		],
 		parameters: Type.Object({
 			query: Type.String({ description: "Natural-language description of the code you are looking for" }),
