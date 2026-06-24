@@ -4,7 +4,7 @@ import { embedTexts } from "./embeddings.ts";
 import { resolveConfig } from "./config.ts";
 import { getProjectInfo } from "./project.ts";
 import { loadManifest, manifestCompatible, searchIndex } from "./store.ts";
-import { buildTagResolver, matchesTagFilter, normalizeTag } from "./tagging.ts";
+import { buildTagResolver, computeTagStats, listDeclaredTags, matchesTagFilter, normalizeTag } from "./tagging.ts";
 
 function snippet(content: string): string {
 	const lines = content.trim().split(/\r?\n/).slice(0, 8);
@@ -22,6 +22,67 @@ function matchesFilters(path: string, params: { path?: string; include?: string[
 	return true;
 }
 
+export function registerTools(pi: ExtensionAPI): void {
+	registerSemanticSearchTool(pi);
+	registerListCodeTagsTool(pi);
+}
+
+function registerListCodeTagsTool(pi: ExtensionAPI): void {
+	pi.registerTool({
+		name: "list_code_tags",
+		label: "List Code Tags",
+		description: "List all .index_tag declarations in this project with file counts, descriptions, and declaring directories. Use this before filtering semantic_code_search to understand what tags exist and how many files they cover.",
+		promptSnippet: "Discover project tags (name, description, file count) to decide include_tags/exclude_tags for semantic_code_search",
+		parameters: Type.Object({}),
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			const project = await getProjectInfo(ctx.cwd);
+			if (!project.safe) return textResult(`Code index unavailable: ${project.reason}`);
+			const { resolved } = await resolveConfig(project);
+			const tagMap = await listDeclaredTags(project.root, new Set(resolved.excludeDirs));
+			if (tagMap.size === 0) {
+				return textResult(
+					[
+						"No .index_tag files in this project yet.",
+						"To organize areas for filtered search, create a .index_tag in any directory:",
+						"  # one-line description of what these tags mean",
+						"  test, e2e",
+						"Subdirectories inherit. Filter with include_tags / exclude_tags. No reindex needed.",
+					].join("\n"),
+				);
+			}
+			const manifest = await loadManifest(project);
+			const filePaths = manifest ? Object.keys(manifest.files) : [];
+			const tagResolver = await buildTagResolver(project.root, new Set(resolved.excludeDirs));
+			const stats = computeTagStats(filePaths, (p) => tagResolver.resolveTags(p));
+			const total = stats.total || 1;
+
+			// Find the longest tag name for alignment.
+			const tagNames = [...tagMap.keys()];
+			const maxTagLen = tagNames.reduce((m, t) => Math.max(m, t.length), 0);
+
+			const lines = ["Tags declared in this project (.index_tag files):", ""];
+			for (const [tag, { dirs, description }] of tagMap) {
+				const count = stats.perTag.get(tag) ?? 0;
+				const pct = Math.round((count / total) * 100);
+				const descStr = description ? `— ${description}` : "";
+				const countStr = `(${count} files · ${pct}%)`;
+				// Two-line entry: tag + description + count, then indented declaring dirs.
+				lines.push(`  ${tag.padEnd(maxTagLen)}  ${descStr.padEnd(44)}  ${countStr}`);
+				lines.push(`  ${"".padEnd(maxTagLen)}  declared in: ${dirs.join(", ")}`);
+			}
+			if (stats.untagged > 0) {
+				const pct = Math.round((stats.untagged / total) * 100);
+				lines.push(`  (untagged: ${stats.untagged} files · ${pct}% — excluded by include_tags)`);
+			}
+			lines.push("");
+			lines.push("Filter semantic_code_search:");
+			lines.push(`  exclude_tags: ["test"]            skip tagged areas (untagged unaffected)`);
+			lines.push(`  include_tags: ["core","harness"]  whitelist: keep files matching ANY (untagged excluded)`);
+			return textResult(lines.join("\n"));
+		},
+	});
+}
+
 export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "semantic_code_search",
@@ -34,6 +95,7 @@ export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 			"The index only covers files that pass all ignore layers: git (root + nested .gitignore, core.excludesFile, .git/info/exclude), then .indexignore, then .contextignore. Add paths to .indexignore to narrow indexing scope without touching git rules.",
 			"Use exclude_tags to filter out tagged areas (e.g. exclude_tags:[\"test\",\"docs\"]) — files without any tag are unaffected. Use include_tags as a strict whitelist (only tagged files pass; untagged files are excluded). Tags come exclusively from .index_tag files in the directory tree; no auto-tagging is applied.",
 			"To organize tags — on your own initiative or when the user asks — create or edit a `.index_tag` file in the relevant directory: comma/space-separated tag names, `#` for comments; subdirectories inherit their ancestors' tags (union). Edits take effect on the next search with no reindex (tags are computed at query time). Likewise, add gitignore-style patterns to .indexignore to exclude paths from indexing.",
+			"Call list_code_tags first to discover which tags exist in this project, what each one covers (description + declaring dirs), and how many files each tag covers (counts + %). Use this information to decide whether to pass include_tags or exclude_tags — counts tell you whether filtering will actually help.",
 		],
 		parameters: Type.Object({
 			query: Type.String({ description: "Natural-language description of the code you are looking for" }),
@@ -73,7 +135,8 @@ export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 			const raw = await searchIndex(project, embedded.vectors[0], candidateN);
 
 			// Build tag resolver once per query (walks .index_tag files; lightweight, zero reindex).
-			const tagResolver = tagFilterActive ? await buildTagResolver(project.root, new Set(resolved.excludeDirs)) : null;
+			// Always construct when !tagFilterActive too, so we can check hasTags for the inline hint.
+			const tagResolver = await buildTagResolver(project.root, new Set(resolved.excludeDirs));
 
 			// scoreThreshold (0 = off) trims low-relevance noise before the final-k cut; score is a
 			// similarity in (0,1] so higher passes. Lifts precision / agent signal, not recall.
@@ -81,7 +144,7 @@ export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 				.filter((r) => matchesFilters(r.path, params))
 				.filter((r) => r.score >= resolved.scoreThreshold)
 				.filter((r) => {
-					if (!tagResolver) return true;
+					if (!tagFilterActive) return true;
 					const fileTags = tagResolver.resolveTags(r.path);
 					return matchesTagFilter(fileTags, includeTags, excludeTags);
 				})
@@ -96,7 +159,24 @@ export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 			const text = results
 				.map((r, i) => `${i + 1}. ${r.path}:${r.startLine}-${r.endLine} score=${r.score.toFixed(3)}${r.symbol ? ` symbol=${r.symbol}` : ""}\n${snippet(r.content)}`)
 				.join("\n\n");
-			return textResult(text, { results });
+
+			// Inline tag hint: show when tag filter is not active, the project has .index_tag files,
+			// and at least one result has tags (so the hint is relevant to this query).
+			let inlineHint = "";
+			if (!tagFilterActive && tagResolver.hasTags) {
+				const anyTagged = results.some((r) => tagResolver.resolveTags(r.path).size > 0);
+				if (anyTagged) {
+					const filePaths = Object.keys(manifest.files);
+					const stats = computeTagStats(filePaths, (p) => tagResolver.resolveTags(p));
+					const total = stats.total || 1;
+					// Sort by count descending for the inline summary.
+					const sorted = [...stats.perTag.entries()].sort(([, a], [, b]) => b - a);
+					const tagSummary = sorted.map(([t, n]) => `${t}(${Math.round((n / total) * 100)}%)`).join(" · ");
+					inlineHint = `\nℹ tags available: ${tagSummary} — pass include_tags/exclude_tags to filter`;
+				}
+			}
+
+			return textResult(text + inlineHint, { results });
 		},
 	});
 }

@@ -7,7 +7,7 @@ import { estimateIndex, incrementalRefresh, reindexProject, removeNonIndexableFi
 import { estimateChunksForFile } from "./chunking.ts";
 import type { IndexEstimate } from "./types.ts";
 import { listIndexableFiles, readSourceFile } from "./filtering.ts";
-import { registerSemanticSearchTool } from "./tool.ts";
+import { registerTools } from "./tool.ts";
 import { confirmEstimate, estimateText, runConfigWizard, updateFooter } from "./ui.ts";
 import { CodeIndexWatcher } from "./watcher.ts";
 import type { ProjectInfo, RuntimeStatus } from "./types.ts";
@@ -292,7 +292,7 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	registerSemanticSearchTool(pi);
+	registerTools(pi);
 
 	pi.on("session_start", async (_event, ctx) => {
 		const project = await getProjectInfo(ctx.cwd);
