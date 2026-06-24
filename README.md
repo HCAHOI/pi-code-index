@@ -22,6 +22,7 @@ intent rather than by exact keywords.
 | `/index reindex` | Full rebuild from scratch (always confirms cost before proceeding) |
 | `/index clear` | Wipe the index without disabling |
 | `/index config` | Open the interactive settings wizard |
+| `/index tags` | List all tags declared in `.index_tag` files (read-only, no reindex needed) |
 | `/index help` | Show subcommand and ignore-layer reference |
 
 ## Ignore layers
@@ -62,6 +63,70 @@ src/generated/
 
 Same syntax as `.gitignore`. Shared with other context tools — prefer `.indexignore` for
 index-specific exclusions.
+
+## Tag filtering
+
+Tag filtering lets you include or exclude groups of source files from a `semantic_code_search`
+query **without touching the index**. Tags are 100% manually declared — no auto-tagging is ever
+applied.
+
+### `.index_tag` format
+
+Place a file named `.index_tag` in any directory. Lines starting with `#` are comments; all other
+content is split by commas and whitespace into tag tokens. Each token is normalized to lowercase,
+trimmed, and stripped of any character outside `[a-z0-9_-]` (invalid tokens are silently dropped).
+
+```
+# Mark this directory as test code
+test, integration
+```
+
+### Inheritance (union, declaration-only)
+
+A file's effective tag set is the **union** of all `.index_tag` files found in its directory and
+every ancestor directory up to the project root. Tags only accumulate — deeper directories add
+tags, never remove them. There is no negation syntax in v1.
+
+Example tree:
+
+```
+project/
+  .index_tag          ← "core"
+  src/
+    .index_tag        ← "src"
+    utils/
+      helper.ts       ← effective tags: core, src
+  tests/
+    .index_tag        ← "test"
+    unit/
+      foo.test.ts     ← effective tags: core, test
+```
+
+### Query parameters
+
+Pass `include_tags` and/or `exclude_tags` to `semantic_code_search`:
+
+| Parameter | Semantics |
+|---|---|
+| `exclude_tags: ["test", "docs"]` | Drop any result whose tags contain **any** listed tag. Files with no tags are **not** affected. |
+| `include_tags: ["core"]` | Keep only results whose tags contain **any** listed tag. Files with no tags are **excluded**. |
+| Both omitted | No tag filtering — behaviour identical to before this feature. |
+
+**Key design properties (important):**
+
+- **Pure declaration, zero heuristics.** Tags come exclusively from `.index_tag` files. No
+  path-based guessing (no automatic `test` or `docs` tags).
+- **Computed at query time, never stored in the index.** Changing or adding a `.index_tag` file
+  takes effect on the next query — **no reindex required**.
+- **`exclude_tags` is the primary tool.** Use it to filter out test/docs/generated areas while
+  leaving all untagged files reachable. Use `include_tags` only when you want a strict whitelist
+  and are comfortable that untagged files will be excluded.
+
+### Discovery
+
+```
+/index tags    # list every declared tag and the directories that declare it
+```
 
 ## Cost model
 
