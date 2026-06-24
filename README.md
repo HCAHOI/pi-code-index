@@ -124,9 +124,48 @@ Pass `include_tags` and/or `exclude_tags` to `semantic_code_search`:
 
 ### Discovery
 
+#### `list_code_tags` tool (recommended)
+
+Call the `list_code_tags` tool to discover all tags in the project before deciding whether to
+filter. It reports — without reading file contents — the number of indexed files each tag covers,
+a one-line description from the `.index_tag` comment, and the directories that declare the tag:
+
 ```
-/index tags    # list every declared tag and the directories that declare it
+Tags declared in this project (.index_tag files):
+
+  test    — end-to-end benchmark tests                        (142 files · 18%)
+            declared in: tests/, demo/gantt_viewer/tests/
+  core    — core scheduling engine                            (610 files · 76%)
+            declared in: src/
+  (untagged: 8 files · 1% — excluded by include_tags)
+
+Filter semantic_code_search:
+  exclude_tags: ["test"]            skip tagged areas (untagged unaffected)
+  include_tags: ["core","harness"]  whitelist: keep files matching ANY (untagged excluded)
 ```
+
+If no `.index_tag` files exist yet, the tool shows an empty-state message that teaches the format.
+
+#### `/index tags` command
+
+Same information as the tool, available from the command palette:
+
+```
+/index tags    # list declared tags with file counts and declaring directories
+```
+
+#### Inline hint in `semantic_code_search`
+
+When tag filtering is not active but the project has `.index_tag` files and at least one result
+belongs to a tagged area, `semantic_code_search` automatically appends a one-line hint:
+
+```
+ℹ tags available: core(76%) · test(18%) · vendor(5%) — pass include_tags/exclude_tags to filter
+```
+
+This surfaces the tag option at the moment it is most useful, without requiring the agent to
+remember to check first. The hint is suppressed when all results are untagged (to avoid noise on
+unrelated queries).
 
 ## Cost model
 
