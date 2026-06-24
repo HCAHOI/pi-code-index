@@ -4,6 +4,7 @@ import { embedTexts } from "./embeddings.ts";
 import { resolveConfig } from "./config.ts";
 import { getProjectInfo } from "./project.ts";
 import { loadManifest, manifestCompatible, searchIndex } from "./store.ts";
+import { buildTagResolver, matchesTagFilter, normalizeTag } from "./tagging.ts";
 
 function snippet(content: string): string {
 	const lines = content.trim().split(/\r?\n/).slice(0, 8);
@@ -31,6 +32,7 @@ export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 			"Use semantic_code_search only for intent-based code discovery when you do not know the exact filename, keyword, or symbol name.",
 			"Use ffgrep for exact text or identifier search, fffind for file/path discovery, and lsp_navigation for definitions/references instead of semantic_code_search.",
 			"The index only covers files that pass all ignore layers: git (root + nested .gitignore, core.excludesFile, .git/info/exclude), then .indexignore, then .contextignore. Add paths to .indexignore to narrow indexing scope without touching git rules.",
+			"Use exclude_tags to filter out tagged areas (e.g. exclude_tags:[\"test\",\"docs\"]) — files without any tag are unaffected. Use include_tags as a strict whitelist (only tagged files pass; untagged files are excluded). Tags come exclusively from .index_tag files in the directory tree; no auto-tagging is applied.",
 		],
 		parameters: Type.Object({
 			query: Type.String({ description: "Natural-language description of the code you are looking for" }),
@@ -38,6 +40,8 @@ export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 			path: Type.Optional(Type.String({ description: "Optional path prefix to restrict results" })),
 			include: Type.Optional(Type.Array(Type.String(), { description: "Optional substring filters that paths must include" })),
 			exclude: Type.Optional(Type.Array(Type.String(), { description: "Optional substring filters that paths must not include" })),
+			include_tags: Type.Optional(Type.Array(Type.String(), { description: "Strict tag whitelist: only results whose .index_tag-declared tags contain at least one of these pass. Untagged files are excluded when this is set." })),
+			exclude_tags: Type.Optional(Type.Array(Type.String(), { description: "Tag exclusion list: results whose .index_tag-declared tags contain any of these are filtered out. Untagged files are not affected." })),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const project = await getProjectInfo(ctx.cwd);
@@ -49,20 +53,45 @@ export function registerSemanticSearchTool(pi: ExtensionAPI): void {
 			if (!manifest) return textResult("Code index is not built yet. Run `/index reindex` to build it.");
 			if (!compatible.ok) return textResult(`Code index is stale: ${compatible.reason}. Run /index reindex before searching.`);
 			if (!resolved.apiKeyPresent && resolved.provider !== "local") return textResult(`Missing API key env ${resolved.apiKeyEnv}. Configure it or run /index config.`);
+
+			// Normalize tag filter inputs once.
+			const includeTags = params.include_tags?.map(normalizeTag).filter((t): t is string => t !== undefined);
+			const excludeTags = params.exclude_tags?.map(normalizeTag).filter((t): t is string => t !== undefined);
+			const tagFilterActive = (includeTags && includeTags.length > 0) || (excludeTags && excludeTags.length > 0);
+
 			// final-k returned to the agent: the agent chooses freely, clamped only by configured maxTopK.
 			const topK = Math.max(1, Math.min(resolved.maxTopK, Math.floor(params.top_k ?? 8)));
 			const embedded = await embedTexts(resolved, [params.query], signal, "query");
 			if (embedded.dimension !== manifest.embeddingDim) return textResult(`Query embedding dimension ${embedded.dimension} does not match index dimension ${manifest.embeddingDim}. Run /index reindex.`);
-			// Candidate pool for post-filtering, capped so a large top_k can't blow up the scan. v2: this
-			// is where rerank's candidate-N gets decoupled from final-k to bound rerank cost.
-			const raw = await searchIndex(project, embedded.vectors[0], Math.min(Math.max(topK * 5, topK), 256));
+
+			// D4: enlarge candidate pool when include_tags is active (whitelist can be sparse), capped at
+			// 1024. The existing pool formula is kept for the exclude-only and no-tag cases.
+			const candidateN = includeTags && includeTags.length > 0
+				? Math.min(topK * 20, 1024)
+				: Math.min(Math.max(topK * 5, topK), 256);
+			const raw = await searchIndex(project, embedded.vectors[0], candidateN);
+
+			// Build tag resolver once per query (walks .index_tag files; lightweight, zero reindex).
+			const tagResolver = tagFilterActive ? await buildTagResolver(project.root) : null;
+
 			// scoreThreshold (0 = off) trims low-relevance noise before the final-k cut; score is a
 			// similarity in (0,1] so higher passes. Lifts precision / agent signal, not recall.
 			const results = raw
 				.filter((r) => matchesFilters(r.path, params))
 				.filter((r) => r.score >= resolved.scoreThreshold)
+				.filter((r) => {
+					if (!tagResolver) return true;
+					const fileTags = tagResolver.resolveTags(r.path);
+					return matchesTagFilter(fileTags, includeTags, excludeTags);
+				})
 				.slice(0, topK);
-			if (results.length === 0) return textResult("No semantic code search results found.", { results: [] });
+
+			if (results.length === 0) {
+				const hint = tagFilterActive && includeTags && includeTags.length > 0
+					? " (include_tags is active — untagged files are excluded; broaden the filter or use exclude_tags instead)"
+					: "";
+				return textResult(`No semantic code search results found.${hint}`, { results: [] });
+			}
 			const text = results
 				.map((r, i) => `${i + 1}. ${r.path}:${r.startLine}-${r.endLine} score=${r.score.toFixed(3)}${r.symbol ? ` symbol=${r.symbol}` : ""}\n${snippet(r.content)}`)
 				.join("\n\n");
