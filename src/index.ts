@@ -89,7 +89,7 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.registerCommand("index", {
-		description: "Manage semantic code index: status|on|off|reindex|clear|config",
+		description: "Manage semantic code index: status|on|off|update|reindex|clear|config|tags|help",
 		handler: async (args, ctx) => {
 			const sub = (args || "status").trim().split(/\s+/)[0] || "status";
 			const project = await getProjectInfo(ctx.cwd);
