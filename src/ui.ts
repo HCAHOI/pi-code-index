@@ -25,7 +25,7 @@ export function updateFooter(ctx: ExtensionContext, status: RuntimeStatus): void
 			text = t.fg("warning", `idx: stale${status.message ? ` ${status.message}` : ""}`);
 			break;
 		case "bulk-pending":
-			text = t.fg("warning", `idx: ⚠ ${status.message ?? "bulk changes"} · /index update`);
+			text = t.fg("warning", `idx: ${status.message ?? "changes pending · run /index update"}`);
 			break;
 		case "error":
 			text = t.fg("error", "idx: error");

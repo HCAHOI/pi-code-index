@@ -58,6 +58,9 @@ export const DEFAULT_INCLUDE_EXTENSIONS = [
 	".go",
 	".java",
 	".kt",
+	".kts",
+	".scala",
+	".sc",
 	".swift",
 	".c",
 	".cpp",
@@ -65,29 +68,74 @@ export const DEFAULT_INCLUDE_EXTENSIONS = [
 	".cxx",
 	".h",
 	".hpp",
+	".m",
+	".mm",
+	".cu",
+	".cuh",
 	".cs",
+	".fs",
+	".fsx",
 	".rb",
 	".php",
 	".lua",
+	".r",
+	".jl",
+	".dart",
 	".ex",
 	".exs",
+	".erl",
+	".hrl",
+	".hs",
+	".lhs",
+	".clj",
+	".cljs",
+	".edn",
+	".nim",
+	".zig",
+	".v",
+	".sv",
+	".svh",
+	".sol",
 	".sql",
+	".proto",
+	".graphql",
+	".gql",
+	".prisma",
+	".tf",
+	".tfvars",
+	".hcl",
+	".nix",
 	".vue",
 	".svelte",
 	".html",
 	".css",
 	".scss",
+	".xml",
 	".md",
 	".mdx",
+	".adoc",
 	".txt",
 	".rst",
+	".tex",
+	".bib",
 	".yaml",
 	".yml",
 	".toml",
 	".json",
+	".ini",
+	".cfg",
+	".conf",
+	".properties",
 	".sh",
 	".bash",
 	".zsh",
+	".ps1",
+	".cmake",
+	".gradle",
+	".bazel",
+	".bzl",
+	".dockerfile",
+	".containerfile",
 ];
 
 export const DEFAULT_EXCLUDE_DIRS = [
@@ -166,7 +214,14 @@ export async function loadGlobalConfig(): Promise<GlobalConfig> {
 		await writeJson(GLOBAL_CONFIG_PATH, DEFAULT_CONFIG);
 		return { ...DEFAULT_CONFIG };
 	}
-	return { ...DEFAULT_CONFIG, ...existing };
+	const merged = { ...DEFAULT_CONFIG, ...existing };
+	// Keep installed configs moving forward as the default source whitelist grows.
+	// Users who need narrower indexing should prefer .indexignore, which does not
+	// get overwritten by default whitelist updates.
+	merged.includeExtensions = [
+		...new Set([...(existing.includeExtensions ?? []), ...DEFAULT_CONFIG.includeExtensions]),
+	];
+	return merged;
 }
 
 export async function saveGlobalConfig(config: GlobalConfig): Promise<void> {

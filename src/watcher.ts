@@ -4,7 +4,7 @@ import { relative } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ProjectInfo, ResolvedConfig } from "./types.ts";
-import { buildIgnoreMatcher, isSecretPath, languageForPath } from "./filtering.ts";
+import { buildIgnoreMatcher, isPathIndexable, isSecretPath, languageForPath } from "./filtering.ts";
 import { deleteFileChunks, loadManifest, manifestCompatible, saveManifest } from "./store.ts";
 import { updateChangedFile } from "./indexer.ts";
 
@@ -46,6 +46,13 @@ export class CodeIndexWatcher {
 		private callbacks: WatcherCallbacks = {},
 	) {}
 
+	// Called when startup reconciliation finds too many out-of-band changes to auto-embed.
+	markBulkPending(count: number): void {
+		this.bulkPending = true;
+		this.bulkCount = count;
+		this.callbacks.onBulkPending?.(this.bulkCount);
+	}
+
 	// Called by /index update after a successful update to clear the bulk-pending state.
 	clearPending(): void {
 		this.bulkPending = false;
@@ -60,12 +67,15 @@ export class CodeIndexWatcher {
 			ignoreInitial: true,
 			persistent: true,
 			followSymlinks: false,
-			ignored: (path) => {
+			ignored: (path, stats) => {
 				const rel = relative(this.project.root, path).replaceAll("\\", "/");
 				if (!rel || rel.startsWith("..")) return false;
 				if (ig.ignores(rel)) return true;
 				if (isSecretPath(rel)) return true;
-				if (!languageForPath(rel)) return true;
+				// Do not language-filter directories. Chokidar prunes ignored directories, so a
+				// new extensionless directory (for example "research-os/") must remain
+				// watched so indexable files created inside it can emit add/change events.
+				if (stats?.isFile() && !languageForPath(rel)) return true;
 				return false;
 			},
 		});
@@ -119,8 +129,11 @@ export class CodeIndexWatcher {
 				if (deleted) {
 					await deleteFileChunks(this.project, rel, manifest);
 					await saveManifest(this.project, manifest);
-				} else {
+				} else if (await isPathIndexable(this.project, this.config, rel)) {
 					await updateChangedFile(this.project, this.config, rel, this.ctx);
+				} else {
+					await deleteFileChunks(this.project, rel, manifest);
+					await saveManifest(this.project, manifest);
 				}
 				this.callbacks.onReady?.();
 			} catch (error) {

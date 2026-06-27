@@ -5,7 +5,7 @@ import { getProjectInfo } from "./project.ts";
 import { loadGlobalConfig, loadProjectState, resolveConfig, saveProjectState } from "./config.ts";
 import { estimateIndex, incrementalRefresh, reindexProject, removeNonIndexableFiles, type ProgressUpdate } from "./indexer.ts";
 import { estimateChunksForFile } from "./chunking.ts";
-import type { IndexEstimate } from "./types.ts";
+import type { IndexEstimate, Manifest, ResolvedConfig } from "./types.ts";
 import { listIndexableFiles, readSourceFile } from "./filtering.ts";
 import { registerTools } from "./tool.ts";
 import { confirmEstimate, estimateText, runConfigWizard, updateFooter } from "./ui.ts";
@@ -43,10 +43,69 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 		watcher = new CodeIndexWatcher(project, resolved, ctx, {
 			onIndexing: (path) => setStatus(ctx, { state: "indexing", message: path }),
 			onReady: async () => setStatus(ctx, await computeStatus(ctx, project)),
-			onBulkPending: (count) => setStatus(ctx, { state: "bulk-pending", message: `${count} changed · /index update` }),
+			onBulkPending: (count) => setStatus(ctx, { state: "bulk-pending", message: `${count} changes pending · run /index update` }),
 			onError: (error) => setStatus(ctx, { state: "error", lastError: error instanceof Error ? error.message : String(error) }),
 		});
 		await watcher.start();
+	}
+
+	async function pendingIndexChanges(
+		project: ProjectInfo,
+		config: ResolvedConfig,
+		manifest: Manifest,
+	): Promise<{ count: number; indexableFiles: string[] }> {
+		const indexableFiles = await listIndexableFiles(project, config);
+		const indexableSet = new Set(indexableFiles);
+		const pending = new Set<string>();
+		for (const path of Object.keys(manifest.files)) {
+			if (!indexableSet.has(path)) pending.add(path);
+		}
+		for (const path of indexableFiles) {
+			const source = await readSourceFile(project, path, config);
+			const entry = manifest.files[path];
+			if (!source) {
+				if (entry) pending.add(path);
+				continue;
+			}
+			if (!entry || entry.fileHash !== source.fileHash) pending.add(path);
+		}
+		return { count: pending.size, indexableFiles };
+	}
+
+	async function runIncrementalUpdate(
+		ctx: ExtensionContext,
+		project: ProjectInfo,
+		config: ResolvedConfig,
+		indexableFiles?: string[],
+	): Promise<Manifest | undefined> {
+		const manifest = await loadManifest(project);
+		if (!manifest) return undefined;
+		const files = indexableFiles ?? (await listIndexableFiles(project, config));
+		await removeNonIndexableFiles(project, manifest, new Set(files));
+		return incrementalRefresh(project, config, ctx, (p: ProgressUpdate) =>
+			setStatus(ctx, { state: "indexing", filesDone: p.filesDone, filesTotal: p.filesTotal, chunks: p.chunks, message: "updating" }),
+		);
+	}
+
+	async function reconcileOnSessionStart(ctx: ExtensionContext, project: ProjectInfo): Promise<void> {
+		const { resolved } = await resolveConfig(project);
+		const manifest = await loadManifest(project);
+		const compatible = manifestCompatible(manifest, resolved);
+		if (!manifest || !compatible.ok) return;
+		const pending = await pendingIndexChanges(project, resolved, manifest);
+		if (pending.count === 0) return;
+		if (pending.count > resolved.watcherBulkThreshold) {
+			watcher?.markBulkPending(pending.count);
+			return;
+		}
+		if (!resolved.apiKeyPresent && resolved.provider !== "local") {
+			setStatus(ctx, { state: "error", lastError: `Missing API key env ${resolved.apiKeyEnv}` });
+			return;
+		}
+		setStatus(ctx, { state: "indexing", message: "startup update" });
+		const refreshed = await runIncrementalUpdate(ctx, project, resolved, pending.indexableFiles);
+		watcher?.clearPending();
+		setStatus(ctx, { state: "ready", chunks: refreshed?.chunkCount ?? manifest.chunkCount });
 	}
 
 	async function showStatus(ctx: ExtensionContext): Promise<void> {
@@ -267,7 +326,10 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 		const project = await getProjectInfo(ctx.cwd);
 		const state = await loadProjectState(project);
 		setStatus(ctx, await computeStatus(ctx, project));
-		if (project.safe && state.enabled) await startWatcher(ctx, project); // watcher only; never full reindex on startup
+		if (project.safe && state.enabled) {
+			await startWatcher(ctx, project);
+			await reconcileOnSessionStart(ctx, project);
+		}
 	});
 
 	pi.on("session_shutdown", async () => {
