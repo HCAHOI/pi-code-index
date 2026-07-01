@@ -1,5 +1,4 @@
 import chokidar, { type FSWatcher } from "chokidar";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { relative } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -38,16 +37,18 @@ export class CodeIndexWatcher {
 	// Serialize flushes: a debounce that fires while a flush is still awaiting embeddings must not
 	// start a second concurrent flush (they would race on the manifest and orphan rows).
 	private flushing: Promise<void> = Promise.resolve();
+	private stopped = true;
+	private abortController = new AbortController();
 
 	constructor(
 		private project: ProjectInfo,
 		private config: ResolvedConfig,
-		private ctx: ExtensionContext,
 		private callbacks: WatcherCallbacks = {},
 	) {}
 
 	// Called when startup reconciliation finds too many out-of-band changes to auto-embed.
 	markBulkPending(count: number): void {
+		if (this.stopped) return;
 		this.bulkPending = true;
 		this.bulkCount = count;
 		this.callbacks.onBulkPending?.(this.bulkCount);
@@ -61,8 +62,12 @@ export class CodeIndexWatcher {
 
 	async start(): Promise<void> {
 		if (this.watcher) return;
+		this.stopped = false;
+		this.abortController = new AbortController();
 		const gitRepo = await isGitRepo(this.project.root);
+		if (this.stopped) return;
 		const ig = await buildIgnoreMatcher(this.project, this.config, gitRepo);
+		if (this.stopped) return;
 		this.watcher = chokidar.watch(this.project.root, {
 			ignoreInitial: true,
 			persistent: true,
@@ -85,18 +90,24 @@ export class CodeIndexWatcher {
 	}
 
 	private enqueue(absPath: string, deleted = false): void {
+		if (this.stopped) return;
 		const rel = relative(this.project.root, absPath).replaceAll("\\", "/");
 		if (!rel || rel.startsWith("..")) return;
 		this.pending.add(deleted ? `!${rel}` : rel);
 		if (this.timer) clearTimeout(this.timer);
 		this.timer = setTimeout(() => {
-			this.flushing = this.flushing.then(() => this.flush());
+			this.flushing = this.flushing.then(() => this.flush(), () => this.flush());
 		}, this.config.watcherDebounceMs);
 	}
 
 	private async flush(): Promise<void> {
+		if (this.stopped) {
+			this.pending.clear();
+			return;
+		}
 		const items = [...this.pending];
 		this.pending.clear();
+		if (items.length === 0) return;
 
 		// If the debounce window accumulated more changes than the bulk threshold, suspend auto-embed
 		// and notify the caller to show a warning. The user must run /index update manually.
@@ -104,18 +115,19 @@ export class CodeIndexWatcher {
 		if (items.length > threshold) {
 			this.bulkPending = true;
 			this.bulkCount += items.length;
-			this.callbacks.onBulkPending?.(this.bulkCount);
+			if (!this.stopped) this.callbacks.onBulkPending?.(this.bulkCount);
 			return;
 		}
 
 		// If already in bulk-pending state, keep accumulating without auto-embedding until cleared.
 		if (this.bulkPending) {
 			this.bulkCount += items.length;
-			this.callbacks.onBulkPending?.(this.bulkCount);
+			if (!this.stopped) this.callbacks.onBulkPending?.(this.bulkCount);
 			return;
 		}
 
 		for (const item of items) {
+			if (this.stopped || this.abortController.signal.aborted) return;
 			try {
 				const deleted = item.startsWith("!");
 				const rel = deleted ? item.slice(1) : item;
@@ -123,26 +135,28 @@ export class CodeIndexWatcher {
 				const manifest = await loadManifest(this.project);
 				const compatible = manifestCompatible(manifest, this.config);
 				if (!manifest || !compatible.ok) {
-					this.callbacks.onReady?.();
+					if (!this.stopped) this.callbacks.onReady?.();
 					continue;
 				}
 				if (deleted) {
 					await deleteFileChunks(this.project, rel, manifest);
 					await saveManifest(this.project, manifest);
 				} else if (await isPathIndexable(this.project, this.config, rel)) {
-					await updateChangedFile(this.project, this.config, rel, this.ctx);
+					await updateChangedFile(this.project, this.config, rel, this.abortController.signal);
 				} else {
 					await deleteFileChunks(this.project, rel, manifest);
 					await saveManifest(this.project, manifest);
 				}
-				this.callbacks.onReady?.();
+				if (!this.stopped) this.callbacks.onReady?.();
 			} catch (error) {
-				this.callbacks.onError?.(error);
+				if (!this.stopped && !this.abortController.signal.aborted) this.callbacks.onError?.(error);
 			}
 		}
 	}
 
 	async stop(): Promise<void> {
+		this.stopped = true;
+		this.abortController.abort();
 		if (this.timer) clearTimeout(this.timer);
 		this.timer = undefined;
 		this.pending.clear();

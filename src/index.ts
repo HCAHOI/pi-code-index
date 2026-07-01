@@ -19,6 +19,16 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 	let status: RuntimeStatus = { state: "off" };
 	let indexingStatusSince: number | undefined;
 	let readyStatusTimer: NodeJS.Timeout | undefined;
+	let sessionGeneration = 0;
+	let sessionActive = false;
+
+	function isStaleContextError(error: unknown): boolean {
+		return error instanceof Error && error.message.includes("This extension ctx is stale");
+	}
+
+	function shouldApplyStatus(generation: number): boolean {
+		return sessionActive && generation === sessionGeneration;
+	}
 
 	function clearReadyStatusTimer(): void {
 		if (readyStatusTimer) clearTimeout(readyStatusTimer);
@@ -27,10 +37,16 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 
 	function applyStatus(ctx: ExtensionContext, next: RuntimeStatus): void {
 		status = next;
-		updateFooter(ctx, status);
+		try {
+			updateFooter(ctx, status);
+		} catch (error) {
+			if (isStaleContextError(error)) return;
+			throw error;
+		}
 	}
 
-	function setStatus(ctx: ExtensionContext, next: RuntimeStatus): void {
+	function setStatus(ctx: ExtensionContext, next: RuntimeStatus, generation = sessionGeneration): void {
+		if (!shouldApplyStatus(generation)) return;
 		if (next.state === "indexing") {
 			clearReadyStatusTimer();
 			indexingStatusSince = Date.now();
@@ -44,6 +60,7 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 				clearReadyStatusTimer();
 				readyStatusTimer = setTimeout(() => {
 					readyStatusTimer = undefined;
+					if (!shouldApplyStatus(generation)) return;
 					indexingStatusSince = undefined;
 					applyStatus(ctx, next);
 				}, remainingMs);
@@ -56,7 +73,7 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 		applyStatus(ctx, next);
 	}
 
-	async function computeStatus(ctx: ExtensionContext, project: ProjectInfo): Promise<RuntimeStatus> {
+	async function computeStatus(project: ProjectInfo): Promise<RuntimeStatus> {
 		const { project: state, resolved } = await resolveConfig(project);
 		if (!project.safe) return { state: "error", lastError: project.reason, message: project.reason };
 		if (!state.enabled) return { state: "off" };
@@ -72,16 +89,20 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 		watcher = undefined;
 	}
 
-	async function startWatcher(ctx: ExtensionContext, project: ProjectInfo): Promise<void> {
+	async function startWatcher(ctx: ExtensionContext, project: ProjectInfo, generation = sessionGeneration): Promise<void> {
 		await stopWatcher();
+		if (!shouldApplyStatus(generation)) return;
 		const { resolved } = await resolveConfig(project);
-		watcher = new CodeIndexWatcher(project, resolved, ctx, {
-			onIndexing: (path) => setStatus(ctx, { state: "indexing", message: path }),
-			onReady: async () => setStatus(ctx, await computeStatus(ctx, project)),
-			onBulkPending: (count) => setStatus(ctx, { state: "bulk-pending", message: `${count} changes pending · run /index update` }),
-			onError: (error) => setStatus(ctx, { state: "error", lastError: error instanceof Error ? error.message : String(error) }),
+		if (!shouldApplyStatus(generation)) return;
+		const nextWatcher = new CodeIndexWatcher(project, resolved, {
+			onIndexing: (path) => setStatus(ctx, { state: "indexing", message: path }, generation),
+			onReady: async () => setStatus(ctx, await computeStatus(project), generation),
+			onBulkPending: (count) => setStatus(ctx, { state: "bulk-pending", message: `${count} changes pending · run /index update` }, generation),
+			onError: (error) => setStatus(ctx, { state: "error", lastError: error instanceof Error ? error.message : String(error) }, generation),
 		});
-		await watcher.start();
+		watcher = nextWatcher;
+		await nextWatcher.start();
+		if (!shouldApplyStatus(generation)) await nextWatcher.stop();
 	}
 
 	async function pendingIndexChanges(
@@ -111,36 +132,40 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		project: ProjectInfo,
 		config: ResolvedConfig,
+		signal: AbortSignal | undefined,
 		indexableFiles?: string[],
+		generation = sessionGeneration,
 	): Promise<Manifest | undefined> {
 		const manifest = await loadManifest(project);
 		if (!manifest) return undefined;
 		const files = indexableFiles ?? (await listIndexableFiles(project, config));
 		await removeNonIndexableFiles(project, manifest, new Set(files));
-		return incrementalRefresh(project, config, ctx, (p: ProgressUpdate) =>
-			setStatus(ctx, { state: "indexing", filesDone: p.filesDone, filesTotal: p.filesTotal, chunks: p.chunks, message: "updating" }),
+		return incrementalRefresh(project, config, signal, (p: ProgressUpdate) =>
+			setStatus(ctx, { state: "indexing", filesDone: p.filesDone, filesTotal: p.filesTotal, chunks: p.chunks, message: "updating" }, generation),
 		);
 	}
 
-	async function reconcileOnSessionStart(ctx: ExtensionContext, project: ProjectInfo): Promise<void> {
+	async function reconcileOnSessionStart(ctx: ExtensionContext, project: ProjectInfo, generation: number, signal: AbortSignal | undefined): Promise<void> {
 		const { resolved } = await resolveConfig(project);
+		if (!shouldApplyStatus(generation)) return;
 		const manifest = await loadManifest(project);
 		const compatible = manifestCompatible(manifest, resolved);
 		if (!manifest || !compatible.ok) return;
 		const pending = await pendingIndexChanges(project, resolved, manifest);
-		if (pending.count === 0) return;
+		if (!shouldApplyStatus(generation) || pending.count === 0) return;
 		if (pending.count > resolved.watcherBulkThreshold) {
 			watcher?.markBulkPending(pending.count);
 			return;
 		}
 		if (!resolved.apiKeyPresent && resolved.provider !== "local") {
-			setStatus(ctx, { state: "error", lastError: `Missing API key env ${resolved.apiKeyEnv}` });
+			setStatus(ctx, { state: "error", lastError: `Missing API key env ${resolved.apiKeyEnv}` }, generation);
 			return;
 		}
-		setStatus(ctx, { state: "indexing", message: "startup update" });
-		const refreshed = await runIncrementalUpdate(ctx, project, resolved, pending.indexableFiles);
+		setStatus(ctx, { state: "indexing", message: "startup update" }, generation);
+		const refreshed = await runIncrementalUpdate(ctx, project, resolved, signal, pending.indexableFiles, generation);
+		if (!shouldApplyStatus(generation)) return;
 		watcher?.clearPending();
-		setStatus(ctx, { state: "ready", chunks: refreshed?.chunkCount ?? manifest.chunkCount });
+		setStatus(ctx, { state: "ready", chunks: refreshed?.chunkCount ?? manifest.chunkCount }, generation);
 	}
 
 	async function showStatus(ctx: ExtensionContext): Promise<void> {
@@ -161,7 +186,7 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 			state.lastError ? `Last error: ${state.lastError}` : undefined,
 		].filter(Boolean);
 		ctx.ui.notify(lines.join("\n"), compatible.ok || !manifest ? "info" : "warning");
-		setStatus(ctx, await computeStatus(ctx, project));
+		setStatus(ctx, await computeStatus(project));
 	}
 
 	async function runReindex(ctx: ExtensionContext, project: ProjectInfo, forceConfirm = false): Promise<void> {
@@ -175,7 +200,7 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		setStatus(ctx, { state: "indexing", filesDone: 0, filesTotal: estimate.files, chunks: 0 });
-		const manifest = await reindexProject(project, resolved, ctx, (p: ProgressUpdate) => {
+		const manifest = await reindexProject(project, resolved, ctx.signal, (p: ProgressUpdate) => {
 			setStatus(ctx, { state: "indexing", filesDone: p.filesDone, filesTotal: p.filesTotal, chunks: p.chunks, message: p.phase });
 		});
 		setStatus(ctx, { state: "ready", chunks: manifest.chunkCount });
@@ -192,7 +217,7 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 				if (sub === "config") {
 					const current = await loadGlobalConfig();
 					await runConfigWizard(ctx, current);
-					setStatus(ctx, await computeStatus(ctx, project));
+					setStatus(ctx, await computeStatus(project));
 					return;
 				}
 				if (!project.safe) throw new Error(project.reason ?? "unsafe project root");
@@ -230,7 +255,7 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 						// Existing compatible index: reconcile files changed while pi was closed.
 						// Incremental (only changed files re-embed) — never a full reindex on enable.
 						setStatus(ctx, { state: "indexing", message: "reconciling" });
-						const refreshed = await incrementalRefresh(project, resolved, ctx, (p: ProgressUpdate) => setStatus(ctx, { state: "indexing", filesDone: p.filesDone, filesTotal: p.filesTotal, chunks: p.chunks, message: "reconciling" }));
+						const refreshed = await incrementalRefresh(project, resolved, ctx.signal, (p: ProgressUpdate) => setStatus(ctx, { state: "indexing", filesDone: p.filesDone, filesTotal: p.filesTotal, chunks: p.chunks, message: "reconciling" }));
 						setStatus(ctx, { state: "ready", chunks: refreshed?.chunkCount ?? manifest.chunkCount });
 						ctx.ui.notify("Code index enabled; reconciled, watcher running", "info");
 					}
@@ -292,12 +317,12 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 						const ok = await confirmEstimate(ctx, incEstimate, needsConfirm);
 						if (!ok) {
 							ctx.ui.notify(`Update cancelled. Removed ${removed} files' chunks (free).`, "info");
-							setStatus(ctx, await computeStatus(ctx, project));
+							setStatus(ctx, await computeStatus(project));
 							return;
 						}
 					}
 					setStatus(ctx, { state: "indexing", message: "embedding new/changed files" });
-					const refreshed = await incrementalRefresh(project, resolved, ctx, (p: ProgressUpdate) =>
+					const refreshed = await incrementalRefresh(project, resolved, ctx.signal, (p: ProgressUpdate) =>
 						setStatus(ctx, { state: "indexing", filesDone: p.filesDone, filesTotal: p.filesTotal, chunks: p.chunks, message: "updating" }),
 					);
 					// Clear bulk-pending flag now that the index is up to date
@@ -358,16 +383,23 @@ export default function codeIndexExtension(pi: ExtensionAPI): void {
 	registerTools(pi);
 
 	pi.on("session_start", async (_event, ctx) => {
+		const generation = ++sessionGeneration;
+		sessionActive = true;
+		const signal = ctx.signal;
 		const project = await getProjectInfo(ctx.cwd);
 		const state = await loadProjectState(project);
-		setStatus(ctx, await computeStatus(ctx, project));
+		setStatus(ctx, await computeStatus(project), generation);
 		if (project.safe && state.enabled) {
-			await startWatcher(ctx, project);
-			await reconcileOnSessionStart(ctx, project);
+			await startWatcher(ctx, project, generation);
+			await reconcileOnSessionStart(ctx, project, generation, signal);
 		}
 	});
 
 	pi.on("session_shutdown", async () => {
+		sessionActive = false;
+		sessionGeneration++;
+		clearReadyStatusTimer();
+		indexingStatusSince = undefined;
 		await stopWatcher();
 	});
 }

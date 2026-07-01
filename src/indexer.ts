@@ -1,4 +1,3 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { stat } from "node:fs/promises";
 import type { IndexEstimate, Manifest, ProjectInfo, ResolvedConfig } from "./types.ts";
 import { INDEX_VERSION } from "./types.ts";
@@ -29,7 +28,7 @@ export async function estimateIndex(project: ProjectInfo, config: ResolvedConfig
 	return { files: files.length, chunks, estimatedTokens, estimatedCost, model: config.model, baseUrl: config.baseUrl };
 }
 
-export async function reindexProject(project: ProjectInfo, config: ResolvedConfig, ctx?: ExtensionContext, onProgress?: (p: ProgressUpdate) => void): Promise<Manifest> {
+export async function reindexProject(project: ProjectInfo, config: ResolvedConfig, signal?: AbortSignal, onProgress?: (p: ProgressUpdate) => void): Promise<Manifest> {
 	await clearIndex(project);
 	const files = await listIndexableFiles(project, config);
 	let manifest: Manifest | undefined;
@@ -37,7 +36,7 @@ export async function reindexProject(project: ProjectInfo, config: ResolvedConfi
 	let chunksDone = 0;
 	onProgress?.({ filesDone, filesTotal: files.length, chunks: chunksDone, phase: "scanning" });
 	for (const path of files) {
-		if (ctx?.signal?.aborted) throw new Error("indexing aborted");
+		if (signal?.aborted) throw new Error("indexing aborted");
 		const source = await readSourceFile(project, path, config);
 		if (!source) {
 			filesDone++;
@@ -49,7 +48,7 @@ export async function reindexProject(project: ProjectInfo, config: ResolvedConfi
 			continue;
 		}
 		onProgress?.({ filesDone, filesTotal: files.length, chunks: chunksDone, phase: "embedding" });
-		const embedded = await embedTexts(config, chunks.map((c) => c.embeddedText), ctx?.signal, "document");
+		const embedded = await embedTexts(config, chunks.map((c) => c.embeddedText), signal, "document");
 		manifest ??= newManifest(project, config, embedded.dimension);
 		if (manifest.embeddingDim && manifest.embeddingDim !== embedded.dimension) throw new Error(`embedding dimension changed: ${embedded.dimension} != ${manifest.embeddingDim}`);
 		manifest.embeddingDim = embedded.dimension;
@@ -69,7 +68,7 @@ export async function reindexProject(project: ProjectInfo, config: ResolvedConfi
 	return manifest;
 }
 
-export async function updateChangedFile(project: ProjectInfo, config: ResolvedConfig, relPath: string, ctx?: ExtensionContext): Promise<Manifest | undefined> {
+export async function updateChangedFile(project: ProjectInfo, config: ResolvedConfig, relPath: string, signal?: AbortSignal): Promise<Manifest | undefined> {
 	const manifest = await loadManifest(project);
 	const compatible = manifestCompatible(manifest, config);
 	if (!manifest || !compatible.ok) return manifest;
@@ -97,7 +96,7 @@ export async function updateChangedFile(project: ProjectInfo, config: ResolvedCo
 		else missing.push(i);
 	});
 	if (missing.length > 0) {
-		const embedded = await embedTexts(config, missing.map((i) => chunks[i].embeddedText), ctx?.signal, "document");
+		const embedded = await embedTexts(config, missing.map((i) => chunks[i].embeddedText), signal, "document");
 		if (embedded.dimension !== manifest.embeddingDim) throw new Error(`embedding dimension ${embedded.dimension} differs from manifest ${manifest.embeddingDim}; run /index reindex`);
 		missing.forEach((idx, j) => (vectors[idx] = embedded.vectors[j]));
 	}
@@ -132,7 +131,7 @@ export async function removeNonIndexableFiles(project: ProjectInfo, manifest: Ma
 	return removed;
 }
 
-export async function incrementalRefresh(project: ProjectInfo, config: ResolvedConfig, ctx?: ExtensionContext, onProgress?: (p: ProgressUpdate) => void): Promise<Manifest | undefined> {
+export async function incrementalRefresh(project: ProjectInfo, config: ResolvedConfig, signal?: AbortSignal, onProgress?: (p: ProgressUpdate) => void): Promise<Manifest | undefined> {
 	const manifest = await loadManifest(project);
 	const compatible = manifestCompatible(manifest, config);
 	if (!manifest || !compatible.ok) return manifest;
@@ -141,7 +140,7 @@ export async function incrementalRefresh(project: ProjectInfo, config: ResolvedC
 	for (const path of files) {
 		const source = await readSourceFile(project, path, config);
 		if (!source) continue;
-		if (manifest.files[path]?.fileHash !== source.fileHash) await updateChangedFile(project, config, path, ctx);
+		if (manifest.files[path]?.fileHash !== source.fileHash) await updateChangedFile(project, config, path, signal);
 		done++;
 		onProgress?.({ filesDone: done, filesTotal: files.length, chunks: manifest.chunkCount, phase: "embedding" });
 	}
