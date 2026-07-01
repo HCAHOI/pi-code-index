@@ -12,13 +12,48 @@ import { confirmEstimate, estimateText, runConfigWizard, updateFooter } from "./
 import { CodeIndexWatcher } from "./watcher.ts";
 import type { ProjectInfo, RuntimeStatus } from "./types.ts";
 
+const MIN_INDEXING_STATUS_MS = 500;
+
 export default function codeIndexExtension(pi: ExtensionAPI): void {
 	let watcher: CodeIndexWatcher | undefined;
 	let status: RuntimeStatus = { state: "off" };
+	let indexingStatusSince: number | undefined;
+	let readyStatusTimer: NodeJS.Timeout | undefined;
 
-	function setStatus(ctx: ExtensionContext, next: RuntimeStatus): void {
+	function clearReadyStatusTimer(): void {
+		if (readyStatusTimer) clearTimeout(readyStatusTimer);
+		readyStatusTimer = undefined;
+	}
+
+	function applyStatus(ctx: ExtensionContext, next: RuntimeStatus): void {
 		status = next;
 		updateFooter(ctx, status);
+	}
+
+	function setStatus(ctx: ExtensionContext, next: RuntimeStatus): void {
+		if (next.state === "indexing") {
+			clearReadyStatusTimer();
+			indexingStatusSince = Date.now();
+			applyStatus(ctx, next);
+			return;
+		}
+
+		if (next.state === "ready" && status.state === "indexing" && indexingStatusSince !== undefined) {
+			const remainingMs = MIN_INDEXING_STATUS_MS - (Date.now() - indexingStatusSince);
+			if (remainingMs > 0) {
+				clearReadyStatusTimer();
+				readyStatusTimer = setTimeout(() => {
+					readyStatusTimer = undefined;
+					indexingStatusSince = undefined;
+					applyStatus(ctx, next);
+				}, remainingMs);
+				return;
+			}
+		}
+
+		clearReadyStatusTimer();
+		indexingStatusSince = undefined;
+		applyStatus(ctx, next);
 	}
 
 	async function computeStatus(ctx: ExtensionContext, project: ProjectInfo): Promise<RuntimeStatus> {
